@@ -1,80 +1,81 @@
-Concurrency in Python for AI Engineering (Async Mental Model)
+# Concurrency in Python for AI Engineering (Async Mental Model)
 
-This document explains Python async concurrency from a practical AI engineering perspective. The focus is not theoretical completeness but building a usable mental model for systems such as LLM orchestration, retrieval pipelines, and API-heavy services.
+This document explains Python async concurrency from a practical AI engineering perspective. The goal is to build a usable mental model for systems like LLM orchestration, retrieval pipelines, and API-heavy services.
 
-1. Concurrency Model (Mental Model)
+---
 
-Python async is based on a single-threaded event loop.
+# 1. Concurrency Model (Mental Model)
 
-At any instant, only one piece of Python code executes. However, execution can switch between tasks when a task is waiting on I/O (network, disk, DB).
+Python async is based on a **single-threaded event loop**.
 
-This is fundamentally different from:
+At any instant, only one piece of Python code executes. However, execution can switch between tasks when a task is waiting on I/O.
 
-Multithreading: multiple threads scheduled by the OS, potentially parallel
-Multiprocessing: multiple processes executing in true parallel on multiple cores
+This is different from:
 
-In async Python:
+- Multithreading (OS-level scheduling)
+- Multiprocessing (true parallel execution across CPU cores)
 
-There is no CPU parallelism by default
-Concurrency is achieved via interleaving execution during waiting periods
-Concurrency vs Parallelism
-Concurrency: multiple tasks make progress over time (interleaved execution)
-Parallelism: multiple tasks execute at the same time (multi-core execution)
+Async provides **concurrency**, not parallelism.
 
-Python async provides concurrency, not parallelism.
+## Concurrency vs Parallelism
 
-Why async exists (I/O waiting problem)
+- **Concurrency:** multiple tasks make progress over time (interleaved execution)
+- **Parallelism:** multiple tasks execute at the same time (true simultaneous execution)
+
+Python async = concurrency only.
+
+## Why async exists
 
 AI systems are dominated by I/O latency:
 
-LLM API calls
-Vector database queries
-HTTP requests
-File I/O
+- LLM API calls
+- Vector database queries
+- HTTP requests
+- File I/O
 
-Without async, a single slow request blocks the entire program.
+Without async, one slow call blocks everything.
 
-Async solves this by allowing the program to switch tasks while waiting.
-
-Non-blocking execution
+## Non-blocking execution
 
 Non-blocking means:
 
-A task voluntarily yields control when waiting
-The event loop can run other tasks during this time
+- A task yields control when waiting
+- The event loop runs other tasks during that wait
 
-No task is forcibly interrupted. Cooperation is required.
+No preemption exists. Everything is cooperative.
 
-Mental model: one worker, many tasks, worker switches only when a task says “I am waiting”.
+---
 
-2. async/await Basics (Language Layer)
+# 2. async/await Basics (Language Layer)
 
-Async in Python is built on coroutines.
+Async Python is built on **coroutines**.
 
 A coroutine is a function that can pause and resume execution.
 
-async def (Coroutine Definition)
+## async def (coroutine definition)
+
+```python
 async def fetch_data():
     return 42
-Meaning
-This defines a coroutine function
-Calling it does NOT execute it
-It returns a coroutine object
+```
 
-Execution happens only when:
+### Meaning
 
-awaited, or
-scheduled as a Task
-await (Suspension Point)
+- Defines a coroutine function
+- Does NOT execute immediately
+- Returns a coroutine object when called
 
-await is the keyword that:
+## await (suspension point)
 
-pauses the current coroutine
-yields control back to the event loop
-resumes when the awaited operation completes
+The `await` keyword:
 
-Example:
+- pauses execution of the coroutine
+- returns control to the event loop
+- resumes when result is ready
 
+### Example
+
+```python
 import asyncio
 
 async def fetch_data():
@@ -86,17 +87,24 @@ async def main():
     print(result)
 
 asyncio.run(main())
-Key idea
+```
 
-When execution hits await:
+## Key idea
 
-coroutine pauses
-event loop switches to other work
-resumes later at same point
-Coroutines vs normal functions
-Normal function: runs immediately to completion
-Coroutine: pauses and resumes via await
-Chaining async calls
+When execution hits `await`:
+
+- coroutine pauses
+- event loop switches tasks
+- resumes later
+
+## Coroutines vs normal functions
+
+- Normal function: runs immediately to completion
+- Coroutine: pauses and resumes via `await`
+
+## Chaining async calls
+
+```python
 import asyncio
 
 async def step1():
@@ -113,96 +121,43 @@ async def main():
     print(b)
 
 asyncio.run(main())
-Execution property
+```
 
-This is sequential async execution, not concurrency.
+Execution is sequential async, not concurrent.
 
-Total time ≈ 2 seconds.
+---
 
-Line-level interpretation
-async def step1()
+# 3. Event Loop + Task Scheduling (Core Engine)
 
-Defines a coroutine. No execution yet.
+The **event loop** is the scheduler.
 
-await asyncio.sleep(1)
-asyncio.sleep(1) → non-blocking timer
-await → suspends coroutine and returns control to event loop
+It repeatedly:
 
-During this time:
+- picks a ready task
+- runs it until `await`
+- stores state
+- switches to another task
 
-coroutine is paused
-other tasks can run
-return "A"
+## Coroutines vs Tasks
 
-Resumes coroutine and returns result to caller.
+- **Coroutine:** defined function, not running
+- **Task:** scheduled coroutine executing in event loop
 
-step2(prev)
+## create_task
 
-Same behavior, but dependent on input from step1.
+```python
+asyncio.create_task(coroutine)
+```
 
-async def main()
+Meaning:
 
-Orchestrator coroutine. Nothing runs until scheduled.
+- schedules coroutine immediately
+- allows independent execution
+- returns a Task object
 
-a = await step1()
+## Example: concurrent workers
 
-Execution flow:
-
-step1 is scheduled
-main pauses
-event loop runs step1
-step1 returns "A"
-execution resumes in main
-b = await step2(a)
-
-Same pattern, sequential dependency.
-
-No concurrency occurs.
-
-asyncio.run(main())
-
-Keyword: asyncio.run
-
-This:
-
-creates event loop
-runs main coroutine
-closes loop after completion
-
-Nothing executes without it.
-
-Key insight
-
-This code uses async syntax but does not exploit concurrency.
-
-3. Event Loop + Task Scheduling (Core Engine)
-
-The event loop is the scheduler.
-
-It continuously:
-
-selects ready tasks
-runs them until await
-stores paused state
-switches to other tasks
-Tasks vs Coroutines
-
-Coroutine
-
-function definition (worker("A"))
-inert until scheduled
-
-Task
-
-scheduled coroutine
-actively managed by event loop
-Cooperative scheduling
-
-There is no preemption.
-
-A coroutine must explicitly yield via await.
-
-Example (true concurrency)
+```python
 import asyncio
 
 async def worker(name):
@@ -218,52 +173,11 @@ async def main():
     await t2
 
 asyncio.run(main())
-asyncio.create_task
+```
 
-Keyword: create_task
+## Execution timeline
 
-Meaning:
-
-schedules coroutine immediately on event loop
-converts coroutine into a Task
-allows it to run independently
-Execution flow
-both tasks start immediately
-both hit sleep
-both pause concurrently
-both resume after ~2 seconds
-
-Total runtime ≈ 2 seconds (not 4)
-
-Key line explanations
-async def worker(name)
-
-Defines coroutine blueprint.
-
-print(f"{name} started")
-
-Runs immediately when coroutine starts.
-
-await asyncio.sleep(2)
-
-Non-blocking pause:
-
-yields execution
-allows other tasks to run
-print(f"{name} finished")
-
-Runs after resumption.
-
-await t1, await t2
-
-Keyword: await Task
-
-Meaning:
-
-wait for completion of scheduled task
-does NOT start task
-only synchronizes with result
-Execution timeline
+```
 t=0s
 A started
 B started
@@ -275,22 +189,20 @@ B sleeping
 t=2s
 A finished
 B finished
-4. Running Concurrency (Practical AI Engineering)
+```
 
-This is the most important usage pattern: fan-out / fan-in
+---
 
-Fan-out: launch multiple independent async operations
-Fan-in: collect results
-asyncio.gather
+# 4. Running Concurrency (AI Engineering Pattern)
 
-Keyword: gather
+## Fan-out / Fan-in pattern
 
-Meaning:
+- Fan-out: start multiple async tasks
+- Fan-in: collect results
 
-schedules multiple coroutines concurrently
-waits for all to complete
-returns results as a list (order preserved)
-Example: parallel LLM calls
+## asyncio.gather
+
+```python
 import asyncio
 
 async def call_llm(prompt):
@@ -307,71 +219,43 @@ async def main():
     print(results)
 
 asyncio.run(main())
-Execution model
+```
 
-At t=0:
+## gather behavior
 
-all 4 coroutines are scheduled
+- runs all tasks concurrently
+- waits for all to complete
+- returns results in input order
 
-During execution:
+## Execution model
 
-all are waiting simultaneously
+```
+t=0s: all tasks start
 
-At t≈1s:
+t=1s: all tasks complete
+```
 
-all complete
+---
 
-Total time ≈ 1 second (not 4)
+# 5. Blocking vs Non-blocking + Thread Escape Hatch
 
-Key behavior of gather
-executes tasks concurrently
-preserves input order
-returns list of results
-AI engineering interpretation
+Async only works for **I/O-bound work**.
 
-This pattern maps directly to:
+## Blocking CPU work
 
-parallel LLM calls
-vector DB queries
-multi-document retrieval
-batch inference pipelines
-Alternative: create_task
-
-Used when explicit task control is required:
-
-cancellation
-monitoring
-dynamic orchestration
-5. Blocking vs Non-blocking + Thread Escape Hatch
-
-Async only works for I/O-bound work.
-
-Problem: CPU blocking
-
-CPU-heavy operations block the event loop:
-
-numpy-heavy computation
-local embeddings
-synchronous libraries
-time.sleep()
-Example blocking function
+```python
 import time
 
 def cpu_task():
     time.sleep(2)
     return "done"
+```
 
-This blocks everything if run inside async code.
+This blocks the event loop.
 
-run_in_executor
+## run_in_executor
 
-Keyword: run_in_executor
-
-Meaning:
-
-offloads blocking work to a thread or process pool
-keeps event loop responsive
-Example
+```python
 import asyncio
 import time
 
@@ -381,24 +265,33 @@ def blocking_io():
 
 async def main():
     loop = asyncio.get_running_loop()
-
     result = await loop.run_in_executor(None, blocking_io)
     print(result)
 
 asyncio.run(main())
-Practical rule in AI systems
-async → I/O orchestration
-threads → blocking libraries
-processes → CPU-heavy workloads
-Final Mental Model
+```
 
-The async event loop is not a parallel execution engine.
+## Meaning
 
-It is a scheduler for waiting tasks.
+- moves blocking work to thread pool
+- keeps event loop responsive
+- preserves concurrency
 
-Execution only progresses when:
+## Practical rule
 
-a task is ready, or
-a task is waiting
+- async → I/O orchestration
+- threads → blocking libraries
+- processes → CPU-heavy workloads
 
-Everything else is just syntax around this scheduling model.
+---
+
+# Final Mental Model
+
+The async event loop is a **scheduler for waiting tasks**, not a parallel execution engine.
+
+Execution progresses only when:
+
+- a task is ready
+- or a task is waiting
+
+Everything else is scheduling mechanics.
